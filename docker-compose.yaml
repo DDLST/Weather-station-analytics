@@ -1,0 +1,123 @@
+version: "3.9"
+
+x-redash-service: &redash-service
+  image: redash/redash:25.1.0
+  restart: unless-stopped
+  env_file: ./.env
+  depends_on:
+    postgres:
+      condition: service_started
+    redis:
+      condition: service_started
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: ws-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - analytics_net
+
+  generator:
+    build: ./app
+    container_name: ws-generator
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      GENERATION_INTERVAL_SECONDS: 2
+      STATIONS_COUNT: 8
+    networks:
+      - analytics_net
+
+  redash_server:
+    <<: *redash-service
+    container_name: ws-redash-server
+    command: server
+    ports:
+      - "5000:5000"
+    environment:
+      REDASH_WEB_WORKERS: 4
+    networks:
+      - analytics_net
+
+  redash_scheduler:
+    <<: *redash-service
+    container_name: ws-redash-scheduler
+    command: scheduler
+    depends_on:
+      - redash_server
+    networks:
+      - analytics_net
+
+  redash_worker:
+    <<: *redash-service
+    container_name: ws-redash-worker
+    command: worker
+    depends_on:
+      - redash_server
+    environment:
+      QUEUES: "queries,scheduled_queries,schemas,periodic,emails,default"
+      WORKERS_COUNT: 2
+    networks:
+      - analytics_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: ws-redis
+    restart: unless-stopped
+    networks:
+      - analytics_net
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ws-postgres
+    restart: unless-stopped
+    env_file: ./.env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - analytics_net
+
+  nginx:
+    image: redash/nginx:latest
+    container_name: ws-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - redash_server
+    links:
+      - redash_server:redash
+    networks:
+      - analytics_net
+
+volumes:
+  mysql_data:
+  postgres_data:
+
+networks:
+  analytics_net:
+    name: analytics_net
