@@ -2,99 +2,106 @@
 
 Проект генерирует осмысленные погодные показания (температура, влажность, давление, ветер, шум), сохраняет их в MySQL и позволяет анализировать через Redash (дашборд с 3+ визуализациями).
 
+---
+
 ## ER-диаграмма БД
-```mermaid
-erDiagram
-    station ||--o{ reading : "1 station -> many readings"
 
-    station {
-        INT id PK
-        VARCHAR city
-        VARCHAR address
-    }
+На рисунке ниже показана ER-диаграмма базы данных, используемой в проекте:
 
-    reading {
-        BIGINT id PK
-        INT station_id FK
-        DECIMAL temperature_c
-        DECIMAL humidity_pct
-        DECIMAL pressure_hpa
-        DECIMAL wind_speed_mps
-        DECIMAL noise_db
-        DATETIME created_at
-    }
-Таблица reading содержит индекс idx_station_time (station_id, created_at) для быстрых запросов по станции и времени.
+![ER Diagram](screenshots/Схема.png)
 
-Требования:
+**Структура БД:**
+- `station` — справочник станций (город, адрес)
+- `reading` — измерения станции во времени (температура, влажность, давление, ветер, шум)
+- Связь: `reading.station_id` → `station.id` (одна станция — много измерений)
+- Индекс в `reading`: `idx_station_time` по `(station_id, created_at)` для быстрых запросов по станции и времени
 
-Docker + Docker Compose
-Свободные порты: 80, 3306, 5000
+---
 
+## Требования
 
-Запуск проекта:
-1)Клонируй репозиторий: 
-git clone <https://github.com/DDLST/Weather-station-analytics.git>
-cd weather-station-analytics
+- Docker + Docker Compose
+- Свободные порты: **80**, **3306**, **5000**
 
-2) Создай .env из примера и замени пароли:
+---
+
+## Запуск проекта
+
+### 1) Клонирование репозитория
+```bash
+git clone https://github.com/DDLST/Weather-station-analytics.git
+cd Weather-station-analytics
+```
+
+### 2) Настройка переменных окружения
+Создай `.env` из примера и замени пароли:
+```bash
 cp .env.example .env
+```
 
-3) Запусти сервисы:
+### 3) Запуск сервисов
+```bash
 docker compose -f docker-compose.yaml up -d --build
+```
 
-4) Один раз инициализируй Redash:
+### 4) Инициализация Redash (выполняется один раз)
+```bash
 docker compose -f docker-compose.yaml run --rm redash_server create_db
+```
 
-Redash
+---
 
-Открой в браузере: http://<IP_сервера> (первый запуск попросит создать пользователя)
-Подключение MySQL как Data Source
+## Redash
 
-Settings → Data Sources → New Data Source → MySQL:
+### Открыть в браузере
+```text
+http://<IP_сервера>
+```
+При первом запуске Redash попросит создать пользователя (Initial Setup).
 
-Host: mysql
-Port: 3306
-Database: weather_station
-User: ws_user
-Password: пароль из .env
+### Подключение MySQL как Data Source
+Settings → Data Sources → New Data Source → MySQL
 
-Скриншоты:
-screenshots/Найстройкасхем1.png
-screenshots/Найстройкасхем3.png
-screenshots/Настройкасхем4.png
-screenshots/ИТОГСХЕМ.png
+Параметры подключения:
+- Host: `mysql`
+- Port: `3306`
+- Database: `weather_station`
+- User: `ws_user`
+- Password: пароль из `.env`
 
-Остановка:
+---
+
+## Скриншоты
+
+### Примеры созданных дашбордов в Redash
+![Dashboard](screenshots/ИТОГСХЕМ.png)
+![Dashboard](screenshots/Найстройкасхем1.png)
+![Dashboard](screenshots/Настройкасхем3.png)
+![Dashboard](screenshots/Настройкасхем4.png)
+---
+
+## Остановка проекта
+```bash
 docker compose -f docker-compose.yaml down
+```
 
-Важные замечания:
-Что было изменено в проекте (на VDS Ubuntu)
-1) docker-compose.yaml — оптимизация Redash под слабый сервер (2 GB RAM)
+---
 
-Чтобы Redash не “съедал” всю оперативную память и не вызывал таймауты в интерфейсе, мы уменьшили количество процессов:
+## Важные замечания (VDS Ubuntu)
 
-В сервисе redash_server:
+### Оптимизация Redash под 2 GB RAM
+Чтобы Redash не “съедал” всю оперативную память и не вызывал таймауты, в `docker-compose.yaml` уменьшили нагрузку:
+- `REDASH_WEB_WORKERS`: **4 → 1**
+- `WORKERS_COUNT`: **2 → 1**
+- `QUEUES`: оставили `"queries,scheduled_queries,schemas"`
 
-REDASH_WEB_WORKERS уменьшили с 4 до 1
-
-В сервисе redash_worker:
-
-WORKERS_COUNT уменьшили с 2 до 1
-
-QUEUES сократили до:
-
-"queries,scheduled_queries,schemas"
-(убрали лишние очереди вроде periodic,emails,default, чтобы снизить нагрузку)
-
-Это снизило потребление RAM/CPU и стабилизировало работу Redash.
-
-2) Управление генератором данных (контейнер generator)
-
-Во время настройки Redash и выполнения первых запросов генератор временно останавливали, чтобы он не нагружал MySQL и не ухудшал отклик системы:
-
-Остановка генератора:
-docker compose stop generator
-
-После настройки запросов/визуализаций генератор включили обратно:
-Запуск генератора:
-docker compose start generator
+### Управление генератором данных
+Во время настройки Redash генератор временно останавливался, затем был включён обратно:
+- Остановка:
+```bash
+docker compose -f docker-compose.yaml stop generator
+```
+- Запуск:
+```bash
+docker compose -f docker-compose.yaml start generator
+```
